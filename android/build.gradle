@@ -31,5 +31,6 @@ dependencies {
     api fileTree(dir: 'libs', include: ['*.jar'])
     api 'com.android.support:appcompat-v7:23.0.1'
     api 'com.facebook.react:react-native:+'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
     testImplementation "junit:junit:4.12"
 }
