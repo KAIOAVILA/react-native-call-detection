@@ -19,9 +19,7 @@ BatchedBridge.registerCallableModule('CallStateUpdateActionModule', CallStateUpd
 
 // https://stackoverflow.com/questions/13154445/how-to-get-phone-number-from-an-incoming-call : Amjad Alwareh's answer.
 const requestPermissionsAndroid = (permissionMessage) => {
-  const requiredPermission = Platform.constants.Release >= 9
-    ? PermissionsAndroid.PERMISSIONS.READ_CALL_LOG
-    : PermissionsAndroid.PERMISSIONS.READ_PHONE_STATE
+  const requiredPermission = PermissionsAndroid.PERMISSIONS.READ_PHONE_STATE
   return PermissionsAndroid.check(requiredPermission)
     .then((gotPermission) => gotPermission
       ? true
