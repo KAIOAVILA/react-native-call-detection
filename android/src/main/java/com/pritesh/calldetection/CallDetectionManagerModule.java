@@ -4,7 +4,9 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.telephony.PhoneStateListener;
 import android.telephony.TelephonyManager;
@@ -14,6 +16,7 @@ import android.util.Log;
 import androidx.annotation.RequiresApi;
 import androidx.core.content.ContextCompat;
 
+import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
@@ -36,9 +39,7 @@ public class CallDetectionManagerModule
     private static final String PREF_NAME = "gerep_call";
     private static final String KEY_START = "start_ts";
     private static final String KEY_DURATION = "duration_sec";
-
-    private boolean wasAppInOffHook = false;
-    private boolean wasAppInRinging = false;
+    
     private boolean callStateListenerRegistered = false;
 
     private static final String TAG = "CallDetectionMgr";
@@ -49,20 +50,20 @@ public class CallDetectionManagerModule
     }
 
     private SharedPreferences getPrefs() {
-          Context appContext = getReactApplicationContext().getApplicationContext();
-          return appContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+        Context appContext = getReactApplicationContext().getApplicationContext();
+        return appContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
     }
 
     private void clearStoredCall() {
-          getPrefs().edit().remove(KEY_START).remove(KEY_DURATION).apply();
+        getPrefs().edit().remove(KEY_START).remove(KEY_DURATION).apply();
     }
 
 
 
-     private TelephonyManager getTelephonyManager() {
-            Context appContext = getReactApplicationContext().getApplicationContext();
-            return (TelephonyManager) appContext.getSystemService(Context.TELEPHONY_SERVICE);
-     }
+    private TelephonyManager getTelephonyManager() {
+        Context appContext = getReactApplicationContext().getApplicationContext();
+        return (TelephonyManager) appContext.getSystemService(Context.TELEPHONY_SERVICE);
+    }
 
 
     @Override
@@ -70,43 +71,43 @@ public class CallDetectionManagerModule
         return "CallDetectionManagerAndroid";
     }
 
-     @ReactMethod
-      public void startListener() {
-          if (activity == null) {
-              activity = getCurrentActivity();
-              if (activity != null) {
-                  activity.getApplication().registerActivityLifecycleCallbacks(this);
-              }
-          }
+    @ReactMethod
+    public void startListener() {
+        if (activity == null) {
+            activity = getCurrentActivity();
+            if (activity != null) {
+                activity.getApplication().registerActivityLifecycleCallbacks(this);
+            }
+        }
 
-          telephonyManager = getTelephonyManager();
-          if (telephonyManager == null) {
-              Log.w(TAG, "TelephonyManager indisponível");
-              return;
-          }
+        telephonyManager = getTelephonyManager();
+        if (telephonyManager == null) {
+            Log.w(TAG, "TelephonyManager indisponível");
+            return;
+        }
 
-          clearStoredCall();
-          callDetectionPhoneStateListener = new CallDetectionPhoneStateListener(this);
+        clearStoredCall();
+        callDetectionPhoneStateListener = new CallDetectionPhoneStateListener(this);
 
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-              if (ContextCompat.checkSelfPermission(
-                      reactContext, Manifest.permission.READ_PHONE_STATE)
-                      == PackageManager.PERMISSION_GRANTED) {
-                  telephonyManager.registerTelephonyCallback(
-                          ContextCompat.getMainExecutor(reactContext),
-                          callStateListener
-                  );
-                  callStateListenerRegistered = true;
-              } else {
-                  Log.w(TAG, "READ_PHONE_STATE não concedida; listener inativo");
-              }
-          } else {
-              telephonyManager.listen(
-                      callDetectionPhoneStateListener,
-                      PhoneStateListener.LISTEN_CALL_STATE
-              );
-              callStateListenerRegistered = true;
-          }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (ContextCompat.checkSelfPermission(
+                    reactContext, Manifest.permission.READ_PHONE_STATE)
+                    == PackageManager.PERMISSION_GRANTED) {
+                telephonyManager.registerTelephonyCallback(
+                        ContextCompat.getMainExecutor(reactContext),
+                        callStateListener
+                );
+                callStateListenerRegistered = true;
+            } else {
+                Log.w(TAG, "READ_PHONE_STATE não concedida; listener inativo");
+            }
+        } else {
+            telephonyManager.listen(
+                    callDetectionPhoneStateListener,
+                    PhoneStateListener.LISTEN_CALL_STATE
+            );
+            callStateListenerRegistered = true;
+        }
     }
 
 
@@ -115,8 +116,6 @@ public class CallDetectionManagerModule
         @Override
         abstract public void onCallStateChanged(int state);
     }
-
-    private boolean callStateListenerRegistered = false;
 
     private CallStateListener callStateListener = (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) ?
             new CallStateListener() {
@@ -153,18 +152,18 @@ public class CallDetectionManagerModule
         telephonyManager = null;
     }
 
-     @ReactMethod
-      public void popLastDuration(Promise promise) {
-          SharedPreferences prefs = getPrefs();
-          long duration = prefs.getLong(KEY_DURATION, -1L);
-          prefs.edit().remove(KEY_DURATION).remove(KEY_START).apply();
+    @ReactMethod
+    public void popLastDuration(Promise promise) {
+        SharedPreferences prefs = getPrefs();
+        long duration = prefs.getLong(KEY_DURATION, -1L);
+        prefs.edit().remove(KEY_DURATION).remove(KEY_START).apply();
 
-          if (duration <= 0) {
-              promise.resolve(null);
-          } else {
-              promise.resolve((double) duration);
-          }
-      }
+        if (duration <= 0) {
+            promise.resolve(null);
+        } else {
+            promise.resolve((double) duration);
+        }
+    }
 
 
     /**
