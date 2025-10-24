@@ -33,57 +33,80 @@ public class CallDetectionManagerModule
     private CallStateUpdateActionModule jsModule = null;
     private CallDetectionPhoneStateListener callDetectionPhoneStateListener;
     private Activity activity = null;
+    private static final String PREF_NAME = "gerep_call";
+    private static final String KEY_START = "start_ts";
+    private static final String KEY_DURATION = "duration_sec";
+
+    private boolean wasAppInOffHook = false;
+    private boolean wasAppInRinging = false;
+    private boolean callStateListenerRegistered = false;
 
     private static final String TAG = "CallDetectionMgr";
-     private boolean callStateListenerRegistered = false;
-
-     private TelephonyManager getTelephonyManager() {
-            Context appContext = getReactApplicationContext().getApplicationContext();
-            return (TelephonyManager) appContext.getSystemService(Context.TELEPHONY_SERVICE);
-     }
 
     public CallDetectionManagerModule(ReactApplicationContext reactContext) {
         super(reactContext);
         this.reactContext = reactContext;
     }
 
+    private SharedPreferences getPrefs() {
+          Context appContext = getReactApplicationContext().getApplicationContext();
+          return appContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+    }
+
+    private void clearStoredCall() {
+          getPrefs().edit().remove(KEY_START).remove(KEY_DURATION).apply();
+    }
+
+
+
+     private TelephonyManager getTelephonyManager() {
+            Context appContext = getReactApplicationContext().getApplicationContext();
+            return (TelephonyManager) appContext.getSystemService(Context.TELEPHONY_SERVICE);
+     }
+
+
     @Override
     public String getName() {
         return "CallDetectionManagerAndroid";
     }
 
-    @ReactMethod
-    public void startListener() {
-        if (activity == null) {
-            activity = getCurrentActivity();
-            if (activity != null) {
-                activity.getApplication().registerActivityLifecycleCallbacks(this);
-            }
-        }
+     @ReactMethod
+      public void startListener() {
+          if (activity == null) {
+              activity = getCurrentActivity();
+              if (activity != null) {
+                  activity.getApplication().registerActivityLifecycleCallbacks(this);
+              }
+          }
 
-        telephonyManager = getTelephonyManager();
-        if (telephonyManager == null) {
-        Log.w(TAG, "TelephonyManager indisponível");
-        return;
-        }
+          telephonyManager = getTelephonyManager();
+          if (telephonyManager == null) {
+              Log.w(TAG, "TelephonyManager indisponível");
+              return;
+          }
 
-        callDetectionPhoneStateListener = new CallDetectionPhoneStateListener(this);
+          clearStoredCall();
+          callDetectionPhoneStateListener = new CallDetectionPhoneStateListener(this);
 
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            if (ContextCompat.checkSelfPermission(
-                    reactContext, Manifest.permission.READ_PHONE_STATE)
-                == PackageManager.PERMISSION_GRANTED) {
-                telephonyManager.registerTelephonyCallback(
-                    ContextCompat.getMainExecutor(reactContext), callStateListener);
-                callStateListenerRegistered = true;
-            } else {
-                Log.w(TAG, "Permissão READ_PHONE_STATE não concedida; listener não registrado");
-            }
-        } else {
-            telephonyManager.listen(
-                callDetectionPhoneStateListener, PhoneStateListener.LISTEN_CALL_STATE);
-            callStateListenerRegistered = true;
-        }
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+              if (ContextCompat.checkSelfPermission(
+                      reactContext, Manifest.permission.READ_PHONE_STATE)
+                      == PackageManager.PERMISSION_GRANTED) {
+                  telephonyManager.registerTelephonyCallback(
+                          ContextCompat.getMainExecutor(reactContext),
+                          callStateListener
+                  );
+                  callStateListenerRegistered = true;
+              } else {
+                  Log.w(TAG, "READ_PHONE_STATE não concedida; listener inativo");
+              }
+          } else {
+              telephonyManager.listen(
+                      callDetectionPhoneStateListener,
+                      PhoneStateListener.LISTEN_CALL_STATE
+              );
+              callStateListenerRegistered = true;
+          }
     }
 
 
@@ -105,17 +128,17 @@ public class CallDetectionManagerModule
             }
             : null;
 
-     @ReactMethod
+    @ReactMethod
     public void stopListener() {
         TelephonyManager manager =
-            (telephonyManager != null) ? telephonyManager : getTelephonyManager();
+                telephonyManager != null ? telephonyManager : getTelephonyManager();
 
         if (!callStateListenerRegistered || manager == null) {
             telephonyManager = null;
             return;
         }
 
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             try {
                 manager.unregisterTelephonyCallback(callStateListener);
             } catch (Exception e) {
@@ -125,9 +148,24 @@ public class CallDetectionManagerModule
             manager.listen(callDetectionPhoneStateListener, PhoneStateListener.LISTEN_NONE);
             callDetectionPhoneStateListener = null;
         }
+
         callStateListenerRegistered = false;
         telephonyManager = null;
     }
+
+     @ReactMethod
+      public void popLastDuration(Promise promise) {
+          SharedPreferences prefs = getPrefs();
+          long duration = prefs.getLong(KEY_DURATION, -1L);
+          prefs.edit().remove(KEY_DURATION).remove(KEY_START).apply();
+
+          if (duration <= 0) {
+              promise.resolve(null);
+          } else {
+              promise.resolve((double) duration);
+          }
+      }
+
 
     /**
      * @return a map of constants this module exports to JS. Supports JSON types.
@@ -181,29 +219,43 @@ public class CallDetectionManagerModule
     @Override
     public void phoneCallStateUpdated(int state, String phoneNumber) {
         jsModule = this.reactContext.getJSModule(CallStateUpdateActionModule.class);
+        SharedPreferences prefs = getPrefs();
 
         switch (state) {
-            //Hangup
             case TelephonyManager.CALL_STATE_IDLE:
-                if(wasAppInOffHook == true) { // if there was an ongoing call and the call state switches to idle, the call must have gotten disconnected
+                if (wasAppInOffHook) {
+                    long startTs = prefs.getLong(KEY_START, -1L);
+                    if (startTs > 0) {
+                        long duration = Math.max(
+                                0,
+                                (System.currentTimeMillis() - startTs) / 1000
+                        );
+                        prefs.edit().remove(KEY_START)
+                                .putLong(KEY_DURATION, duration)
+                                .apply();
+                    } else {
+                        prefs.edit().remove(KEY_DURATION).apply();
+                    }
                     jsModule.callStateUpdated("Disconnected", phoneNumber);
-                } else if(wasAppInRinging == true) { // if the phone was ringing but there was no actual ongoing call, it must have gotten missed
+                } else if (wasAppInRinging) {
+                    prefs.edit().remove(KEY_START).remove(KEY_DURATION).apply();
                     jsModule.callStateUpdated("Missed", phoneNumber);
                 }
 
-                //reset device state
                 wasAppInRinging = false;
                 wasAppInOffHook = false;
                 break;
-            //Outgoing
+
             case TelephonyManager.CALL_STATE_OFFHOOK:
-                //Device call state: Off-hook. At least one call exists that is dialing, active, or on hold, and no calls are ringing or waiting.
                 wasAppInOffHook = true;
+                prefs.edit()
+                        .putLong(KEY_START, System.currentTimeMillis())
+                        .remove(KEY_DURATION)
+                        .apply();
                 jsModule.callStateUpdated("Offhook", phoneNumber);
                 break;
-            //Incoming
+
             case TelephonyManager.CALL_STATE_RINGING:
-                // Device call state: Ringing. A new call arrived and is ringing or waiting. In the latter case, another call is already active.
                 wasAppInRinging = true;
                 jsModule.callStateUpdated("Incoming", phoneNumber);
                 break;
