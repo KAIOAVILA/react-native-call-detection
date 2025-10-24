@@ -34,6 +34,14 @@ public class CallDetectionManagerModule
     private CallDetectionPhoneStateListener callDetectionPhoneStateListener;
     private Activity activity = null;
 
+    private static final String TAG = "CallDetectionMgr";
+     private boolean callStateListenerRegistered = false;
+
+     private TelephonyManager getTelephonyManager() {
+            Context appContext = getReactApplicationContext().getApplicationContext();
+            return (TelephonyManager) appContext.getSystemService(Context.TELEPHONY_SERVICE);
+     }
+
     public CallDetectionManagerModule(ReactApplicationContext reactContext) {
         super(reactContext);
         this.reactContext = reactContext;
@@ -48,22 +56,36 @@ public class CallDetectionManagerModule
     public void startListener() {
         if (activity == null) {
             activity = getCurrentActivity();
-            activity.getApplication().registerActivityLifecycleCallbacks(this);
+            if (activity != null) {
+                activity.getApplication().registerActivityLifecycleCallbacks(this);
+            }
         }
 
-        telephonyManager = (TelephonyManager) this.reactContext.getSystemService(
-                Context.TELEPHONY_SERVICE);
+        telephonyManager = getTelephonyManager();
+        if (telephonyManager == null) {
+        Log.w(TAG, "TelephonyManager indisponível");
+        return;
+        }
+
         callDetectionPhoneStateListener = new CallDetectionPhoneStateListener(this);
-        // Adapted from https://stackoverflow.com/a/71789261
+
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            if (reactContext.checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED) {
-                telephonyManager.registerTelephonyCallback(ContextCompat.getMainExecutor(reactContext), callStateListener);
+            if (ContextCompat.checkSelfPermission(
+                    reactContext, Manifest.permission.READ_PHONE_STATE)
+                == PackageManager.PERMISSION_GRANTED) {
+                telephonyManager.registerTelephonyCallback(
+                    ContextCompat.getMainExecutor(reactContext), callStateListener);
+                callStateListenerRegistered = true;
+            } else {
+                Log.w(TAG, "Permissão READ_PHONE_STATE não concedida; listener não registrado");
             }
         } else {
-            telephonyManager.listen(callDetectionPhoneStateListener, PhoneStateListener.LISTEN_CALL_STATE);
+            telephonyManager.listen(
+                callDetectionPhoneStateListener, PhoneStateListener.LISTEN_CALL_STATE);
+            callStateListenerRegistered = true;
         }
-
     }
+
 
     @RequiresApi(api = android.os.Build.VERSION_CODES.S)
     private static abstract class CallStateListener extends TelephonyCallback implements TelephonyCallback.CallStateListener {
@@ -83,16 +105,27 @@ public class CallDetectionManagerModule
             }
             : null;
 
-    @ReactMethod
+     @ReactMethod
     public void stopListener() {
+        TelephonyManager manager =
+            (telephonyManager != null) ? telephonyManager : getTelephonyManager();
+
+        if (!callStateListenerRegistered || manager == null) {
+            telephonyManager = null;
+            return;
+        }
 
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            telephonyManager.unregisterTelephonyCallback(callStateListener);
-        } else {
-            telephonyManager.listen(callDetectionPhoneStateListener,
-                    PhoneStateListener.LISTEN_NONE);
+            try {
+                manager.unregisterTelephonyCallback(callStateListener);
+            } catch (Exception e) {
+                Log.w(TAG, "Falhou ao remover TelephonyCallback", e);
+            }
+        } else if (callDetectionPhoneStateListener != null) {
+            manager.listen(callDetectionPhoneStateListener, PhoneStateListener.LISTEN_NONE);
             callDetectionPhoneStateListener = null;
         }
+        callStateListenerRegistered = false;
         telephonyManager = null;
     }
 
